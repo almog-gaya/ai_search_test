@@ -3,12 +3,10 @@ import json
 import openai
 import numpy as np
 import os
-import time
 
 openai.api_key = os.getenv('OPENAI_API_KEY') or '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'
 EMBEDDING_MODEL = 'text-embedding-ada-002'
 DATA_FILE = 'QA_json2_with_embeddings.json'
-RAW_DATA_FILE = 'QA_json2.json'
 BASE_PROMPT = """
     You are a real estate professional's assistant, chatting via SMS. Reply conversationally but briefly (under 20 words - less if possible). Your main goal is to gather property details (address, price, and sometimes condition) in a natural, friendly manner while making sure the conversation and its history makes sense altogether, and the context is clear.
     
@@ -80,67 +78,16 @@ def get_history():
 def add_to_history(role, content):
     st.session_state['history'].append({'role': role, 'content': content})
 
-# --- Embedding Helper Function ---
-def get_embedding(text, model=EMBEDDING_MODEL, max_retries=5):
-    for attempt in range(max_retries):
-        try:
-            response = openai.embeddings.create(input=[text], model=model)
-            return response.data[0].embedding
-        except Exception as e:
-            print(f"Error getting embedding: {e}. Retrying ({attempt+1}/{max_retries})...")
-            time.sleep(2)
-    raise RuntimeError(f"Failed to get embedding after {max_retries} attempts.")
-
-# --- Generate Embeddings ---
-def generate_embeddings():
-    try:
-        st.info("Embedding file not found. Generating embeddings... This may take a few minutes.")
-        
-        # Load the raw data file
-        with open(RAW_DATA_FILE, 'r') as f:
-            data = json.load(f)
-        
-        # Add embeddings to each item
-        progress_bar = st.progress(0)
-        total_items = len(data['questions'])
-        
-        for i, item in enumerate(data['questions']):
-            question = item.get('question', '')
-            if question:
-                embedding = get_embedding(question)
-                item['embedding'] = embedding
-            else:
-                item['embedding'] = None
-            
-            # Update progress
-            progress_bar.progress((i + 1) / total_items)
-        
-        # Save the embeddings
-        with open(DATA_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        st.success("Embeddings generated successfully!")
-        return data
-    except Exception as e:
-        st.error(f"Error generating embeddings: {e}")
-        raise
-
 # --- Data Loading ---
 @st.cache_resource
 def load_data():
-    try:
-        # Try to load the embedding file
-        with open(DATA_FILE, 'r') as f:
-            data = json.load(f)
-        return data
-    except FileNotFoundError:
-        # If the embedding file doesn't exist, check if the raw data file exists
-        try:
-            return generate_embeddings()
-        except FileNotFoundError:
-            st.error(f"Neither {DATA_FILE} nor {RAW_DATA_FILE} found. Please check your data files.")
-            # Return empty data structure as fallback
-            return {"questions": []}
+    with open(DATA_FILE, 'r') as f:
+        data = json.load(f)
+    return data
+
+def get_embedding(text, model=EMBEDDING_MODEL):
+    response = openai.embeddings.create(input=[text], model=model)
+    return response.data[0].embedding
 
 def cosine_similarity(a, b):
     a = np.array(a)
