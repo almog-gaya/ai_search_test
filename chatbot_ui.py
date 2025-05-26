@@ -10,19 +10,24 @@ DATA_FILE = 'QA_JSON_with_embeddings.json'
 BASE_PROMPT = """
     You are a real estate professional's assistant, chatting via SMS with realtors. Reply conversationally but briefly (under 20 words - less if possible). Your main goal is to gather property details (address, price, and sometimes condition) in a natural, friendly manner while making sure the conversation and its history makes sense altogether, and the context is clear.
     
+    MOST IMPORTANT RULE: Always prioritize common sense and natural conversation over using knowledge base answers. If a knowledge base answer seems irrelevant to the current conversation, ignore it completely and respond based on context and conversational flow.
+    
+    
     Always prioritize natural conversation over information gathering move the conversation forward naturally even if the user is not providing the information you need.
     
-    If the user gives a short answer like "yes" or "no", respond conversationally as a human would, not with a mechanical list of questions. For example, if they say "yes" to having properties, respond with something like "Great! What kind of property do you have in mind?" or "Awesome! Tell me a bit about it."
+    Respond conversationally as a human would, not with a mechanical list of questions. For example, if they say "yes" to having properties, respond with something like "Great! What kind of property do you have in mind?" or "Awesome! Tell me a bit about it."
     
     Never repeat a question if the user has already answered it, even if they repeat their answer.
     Once you have all the required details (address, price, condition), thank the user and close the conversation. Use language similar to: "Thank you for the details! I'll forward this to my team and someone will be in touch soon." Do not repeat this example verbatim or include multiple closing messages.
     
-    Always answer the user's question directly using the best-matching QA entry from the knowledge base if it is specific or factual. If the user asks a question, answer it first, then (if needed) request any missing details (address, price, condition).
+    Always answer the user's question directly using the best-matching QA entry from the knowledge base. If no good match is found in the knowledge base, rely on general conversational rules rather than forcing an irrelevant answer.
+    If the user asks a question, answer it first, then (if needed) request any missing details (address, price, condition).
     
     CRITICAL INSTRUCTIONS:
     - When the user asks "what are you looking for" or any variation (including phrases like "sure what are you looking for"), ALWAYS respond with specific property criteria from the knowledge base. The answer should mention your interest in properties needing renovation, off-market deals, etc.
     - Pay close attention to questions hidden in statements that start with words like "sure" or "ok" - these are still questions that need direct answers.
     - Never interpret "what are you looking for" as confirmation that they have a property. It is a question about what types of properties YOU are seeking.
+    - For simple, straightforward replies like "ok", "yes", "sounds good", "call me tomorrow", IGNORE any knowledge base matches and respond naturally based on context.
     
     GENERAL RULES:
     - Be conversational, friendly, and human-like - not robotic or scripted.
@@ -34,6 +39,7 @@ BASE_PROMPT = """
     - Never close the conversation unless you have actually received all required details.
     - ALWAYS check the conversation history to avoid repetition or asking for information already provided.
     - When gathering information, do it conversationally - don't just list what you need.
+    - NEVER respond with "I couldn't find a relevant answer" or similar phrases that reveal technical limitations.
 """
 
 # --- Custom Fields ---
@@ -104,7 +110,7 @@ def cosine_similarity(a, b):
     b = np.array(b)
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-def search(query, data, top_k=3, min_similarity=0.7, audience_type=None):
+def search(query, data, top_k=3, min_similarity=0.85, audience_type=None):
     query_emb = get_embedding(query)
     results = []
     for category, items in data.items():
@@ -122,15 +128,43 @@ def search(query, data, top_k=3, min_similarity=0.7, audience_type=None):
                 sim = cosine_similarity(query_emb, item_emb)
                 results.append((sim, category, item))
     results.sort(reverse=True, key=lambda x: x[0])
-    if results and results[0][0] < min_similarity:
+    
+    # Return empty list if no good matches (higher threshold)
+    if not results or results[0][0] < min_similarity:
         return []
+    
     return results[:top_k]
 
 def generate_llm_response(user_input, top_qas, system_prompt, history):
+    # Check for special case questions that must always be answered
+    is_asking_what_looking_for = "what are you looking for" in user_input.lower() or "what do you look for" in user_input.lower()
+    
+    # First, check if this is a simple message that shouldn't use knowledge base
+    simple_messages = ["yes", "no", "ok", "sounds good", "call me", "tomorrow", "later", "sure"]
+    is_simple_message = any(simple in user_input.lower() for simple in simple_messages) and len(user_input.split()) < 5
+    
     # Compose context for the LLM
-    context = "Relevant Q&A from our knowledge base:\n"
-    for i, (sim, category, item) in enumerate(top_qas):
-        context += f"Q: {item['question']}\nA: {item['answer']}\n"
+    context = ""
+    
+    # Special handling for "what are you looking for"
+    if is_asking_what_looking_for and 'property_criteria' in st.session_state and 'criteria_description' in st.session_state:
+        context = f"""
+IMPORTANT: The user is asking what properties you're looking for. ALWAYS answer this directly using the criteria below:
+Property Criteria: {st.session_state['property_criteria']}
+Description: {st.session_state['criteria_description']}
+
+Please respond conversationally using this information, explaining what types of properties you're seeking.
+"""
+    elif top_qas and not is_simple_message:
+        context = "Relevant Q&A from our knowledge base:\n"
+        for i, (sim, category, item) in enumerate(top_qas):
+            context += f"Q: {item['question']}\nA: {item['answer']}\nSimilarity: {sim:.2f}\n\n"
+    else:
+        context = """
+No exact matches found in the knowledge base. Please provide a helpful, natural response based on the conversation context.
+IMPORTANT: Never say you couldn't find an answer or don't know something. Always be helpful and confident.
+"""
+    
     # Build messages for OpenAI Chat API
     messages = [
         {"role": "system", "content": system_prompt},
