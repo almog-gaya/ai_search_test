@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: streamlit-app
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run chatbot_ui.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5 

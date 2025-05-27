@@ -3,12 +3,14 @@ import json
 import openai
 import numpy as np
 import os
+from openai import OpenAI
 
-# Initialize OpenAI client with careful handling of environment variables
+# Initialize OpenAI client properly
 api_key = os.getenv('OPENAI_API_KEY') or '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'
 
-# Simple client initialization without proxies
-openai.api_key = api_key
+# Create client instance directly instead of using global client
+client = OpenAI(api_key=api_key)
+
 if not api_key:
     st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
     st.stop()
@@ -89,25 +91,54 @@ def add_to_history(role, content):
 # --- Data Loading ---
 @st.cache_resource
 def load_data():
-    with open(DATA_FILE, 'r') as f:
-        data = json.load(f)
-    return data
+    try:
+        with open(DATA_FILE, 'r') as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return {"questions": []}
 
 def get_embedding(text, model=EMBEDDING_MODEL):
     try:
-        response = openai.embeddings.create(input=[text], model=model)
+        response = client.embeddings.create(input=[text], model=model)
         return response.data[0].embedding
     except Exception as e:
         st.error(f"Error getting embeddings: {str(e)}")
-        return []
+        # Return a zero vector with the right dimension (1536 for ada-002)
+        return [0.0] * 1536
 
 def cosine_similarity(a, b):
+    # Check if either vector is empty
+    if not a or not b:
+        return 0.0
+        
     a = np.array(a)
     b = np.array(b)
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    
+    # Check if vectors have correct dimensions
+    if a.size == 0 or b.size == 0:
+        return 0.0
+    
+    # Check if dimensions match
+    if a.shape != b.shape:
+        st.error(f"Vector dimensions don't match: {a.shape} vs {b.shape}")
+        return 0.0
+        
+    # Avoid division by zero
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+        
+    return np.dot(a, b) / (norm_a * norm_b)
 
 def search(query, data, top_k=3, min_similarity=0.75, audience_type=None):
     query_emb = get_embedding(query)
+    if not query_emb:
+        st.error("Failed to generate embeddings for search query")
+        return []
+        
     results = []
     
     # Updated to work with the new flat JSON structure
@@ -130,9 +161,15 @@ def search(query, data, top_k=3, min_similarity=0.75, audience_type=None):
                 
         item_emb = item.get('embedding')
         if item_emb:
-            sim = cosine_similarity(query_emb, item_emb)
-            results.append((sim, item))
+            try:
+                sim = cosine_similarity(query_emb, item_emb)
+                results.append((sim, item))
+            except Exception as e:
+                st.error(f"Error in similarity calculation: {str(e)}")
     
+    if not results:
+        return []
+        
     results.sort(reverse=True, key=lambda x: x[0])
     
     # Return empty list if no good matches
@@ -169,7 +206,7 @@ IMPORTANT: Never say you couldn't find an answer or don't know something. Always
     messages.append({"role": "user", "content": context})
     
     try:
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
             max_tokens=150,
