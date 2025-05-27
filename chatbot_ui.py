@@ -3,13 +3,28 @@ import json
 import openai
 import numpy as np
 import os
-from openai import OpenAI
+import http.client
+import urllib.request
 
 # Initialize OpenAI client properly
 api_key = os.getenv('OPENAI_API_KEY') or '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'
 
-# Create client instance directly instead of using global client
-client = OpenAI(api_key=api_key)
+# Use the global API key method instead of client
+openai.api_key = api_key
+
+# Disable proxies in the global environment to prevent issues
+# This is a workaround for the 'proxies' error in OpenAI client
+proxy_env_vars = [
+    'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 
+    'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy'
+]
+saved_env = {}
+
+# Save and remove proxy environment variables
+for var in proxy_env_vars:
+    if var in os.environ:
+        saved_env[var] = os.environ[var]
+        del os.environ[var]
 
 if not api_key:
     st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
@@ -101,7 +116,7 @@ def load_data():
 
 def get_embedding(text, model=EMBEDDING_MODEL):
     try:
-        response = client.embeddings.create(input=[text], model=model)
+        response = openai.embeddings.create(input=[text], model=model)
         return response.data[0].embedding
     except Exception as e:
         st.error(f"Error getting embeddings: {str(e)}")
@@ -206,7 +221,7 @@ IMPORTANT: Never say you couldn't find an answer or don't know something. Always
     messages.append({"role": "user", "content": context})
     
     try:
-        response = client.chat.completions.create(
+        response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
             max_tokens=150,
