@@ -4,8 +4,12 @@ import openai
 import numpy as np
 import os
 
-openai.api_key = os.getenv('OPENAI_API_KEY') or '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'
-if not openai.api_key:
+# Initialize OpenAI client with careful handling of environment variables
+api_key = os.getenv('OPENAI_API_KEY') or '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'
+
+# Simple client initialization without proxies
+openai.api_key = api_key
+if not api_key:
     st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
     st.stop()
 
@@ -90,8 +94,12 @@ def load_data():
     return data
 
 def get_embedding(text, model=EMBEDDING_MODEL):
-    response = openai.embeddings.create(input=[text], model=model)
-    return response.data[0].embedding
+    try:
+        response = openai.embeddings.create(input=[text], model=model)
+        return response.data[0].embedding
+    except Exception as e:
+        st.error(f"Error getting embeddings: {str(e)}")
+        return []
 
 def cosine_similarity(a, b):
     a = np.array(a)
@@ -159,13 +167,18 @@ IMPORTANT: Never say you couldn't find an answer or don't know something. Always
         messages.append({"role": msg['role'], "content": msg['content']})
     messages.append({"role": "user", "content": user_input})
     messages.append({"role": "user", "content": context})
-    response = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        max_tokens=150,
-        temperature=0.7,
-    )
-    return response.choices[0].message.content.strip()
+    
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=150,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        st.error(f"Error generating response: {str(e)}")
+        return "I'm having trouble connecting right now. Please try again in a moment."
 
 # --- Streamlit UI ---
 st.title("Real Estate AI Assistant")
